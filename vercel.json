@@ -23,8 +23,5 @@
       "src": "/(.*)",
       "dest": "dist/public/$1"
     }
-  ],
-  "functions": {
-    "nodeVersion": "18.x"
-  }
+  ]
 }
