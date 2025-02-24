@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -16,17 +16,34 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Calendar } from "@/components/ui/calendar"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { updateUserRole } from "@/lib/roles";
 import { db, auth } from "@/lib/firebase";
 import { ref, onValue, remove } from "firebase/database";
 import { createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { useToast } from "@/hooks/use-toast";
-import { Settings as SettingsIcon, UserPlus, Users } from "lucide-react";
+import { Settings as SettingsIcon, UserPlus, Users, Activity, CalendarIcon } from "lucide-react";
 import { useRole } from "@/hooks/use-role";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { UserAction } from "@/lib/activity-logger";
+import { format } from "date-fns";
+import { nl } from "date-fns/locale";
+import { logUserAction } from "@/lib/activity-logger";
 
 type DatabaseUser = {
   uid: string;
@@ -52,6 +69,9 @@ export default function Settings() {
   const [users, setUsers] = useState<DatabaseUser[]>([]);
   const [changingPasswordFor, setChangingPasswordFor] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState<DatabaseUser | null>(null);
+  const [userLogs, setUserLogs] = useState<(UserAction & { id: string })[]>([]);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [selectedUser, setSelectedUser] = useState<string>("all");
   const { toast } = useToast();
   const { isAdmin } = useRole();
 
@@ -84,9 +104,39 @@ export default function Settings() {
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    const logsRef = ref(db, "user_logs");
+    const unsubscribe = onValue(logsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const logsList = Object.entries(data).map(([id, log]: [string, any]) => ({
+          id,
+          ...log
+        }));
+        setUserLogs(logsList);
+      } else {
+        setUserLogs([]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const filteredLogs = userLogs.filter(log => {
+    const logDate = new Date(log.timestamp).toISOString().split('T')[0];
+    const selectedDateStr = selectedDate.toISOString().split('T')[0];
+    const dateMatch = logDate === selectedDateStr;
+    const userMatch = selectedUser === "all" || log.userEmail === selectedUser;
+    return dateMatch && userMatch;
+  }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
   const handleRoleChange = async (uid: string, email: string, newIsAdmin: boolean) => {
     try {
       await updateUserRole(uid, email, newIsAdmin);
+      await logUserAction(
+        "Gebruikersrol gewijzigd",
+        `${email} is gewijzigd naar ${newIsAdmin ? 'administrator' : 'medewerker'}`
+      );
       toast({
         title: "Succes",
         description: `Gebruiker ${email} is nu ${newIsAdmin ? 'admin' : 'medewerker'}`,
@@ -104,6 +154,10 @@ export default function Settings() {
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
       await updateUserRole(userCredential.user.uid, data.email, data.isAdmin);
+      await logUserAction(
+        "Nieuwe gebruiker aangemaakt",
+        `Gebruiker ${data.email} aangemaakt als ${data.isAdmin ? 'administrator' : 'medewerker'}`
+      );
 
       toast({
         title: "Succes",
@@ -124,6 +178,10 @@ export default function Settings() {
 
     try {
       await sendPasswordResetEmail(auth, changingPasswordFor);
+      await logUserAction(
+        "Wachtwoord reset",
+        `Wachtwoord reset link verstuurd naar ${changingPasswordFor}`
+      );
 
       toast({
         title: "Succes",
@@ -145,6 +203,10 @@ export default function Settings() {
 
     try {
       await remove(ref(db, `users/${deletingUser.uid}`));
+      await logUserAction(
+        "Gebruiker verwijderd",
+        `Gebruiker ${deletingUser.email} is verwijderd`
+      );
 
       toast({
         title: "Succes",
@@ -169,12 +231,11 @@ export default function Settings() {
   }
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto px-4 py-6">
-      {/* Page Header */}
-      <div className="flex items-center justify-between mb-8">
+    <div className="container mx-auto px-4 py-6 max-w-6xl space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
         <div className="flex items-center gap-3">
-          <SettingsIcon className="h-8 w-8 text-[#963E56]" />
-          <h1 className="text-3xl font-bold text-[#963E56]">Instellingen</h1>
+          <SettingsIcon className="h-8 w-8 text-primary" />
+          <h1 className="text-3xl font-bold text-primary">Instellingen</h1>
         </div>
       </div>
 
@@ -199,9 +260,9 @@ export default function Settings() {
                         <FormItem>
                           <FormLabel>E-mailadres</FormLabel>
                           <FormControl>
-                            <Input 
-                              type="email" 
-                              placeholder="naam@voorbeeld.be" 
+                            <Input
+                              type="email"
+                              placeholder="naam@voorbeeld.be"
                               {...field}
                             />
                           </FormControl>
@@ -216,9 +277,9 @@ export default function Settings() {
                         <FormItem>
                           <FormLabel>Wachtwoord</FormLabel>
                           <FormControl>
-                            <Input 
-                              type="password" 
-                              placeholder="Minimaal 6 tekens, gebruik hoofdletters, cijfers en symbolen" 
+                            <Input
+                              type="password"
+                              placeholder="Minimaal 6 tekens, gebruik hoofdletters, cijfers en symbolen"
                               {...field}
                             />
                           </FormControl>
@@ -267,8 +328,8 @@ export default function Settings() {
                         <TableCell>{user.email}</TableCell>
                         <TableCell>
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            user.admin 
-                              ? 'bg-[#963E56]/10 text-[#963E56]' 
+                            user.admin
+                              ? 'bg-[#963E56]/10 text-[#963E56]'
                               : 'bg-blue-100 text-blue-800'
                           }`}>
                             {user.admin ? 'Admin' : 'Medewerker'}
@@ -315,6 +376,129 @@ export default function Settings() {
                   </TableBody>
                 </Table>
               </div>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* User Activity Logs Section */}
+        <AccordionItem value="activity-logs" className="border rounded-lg overflow-hidden">
+          <AccordionTrigger className="px-6 py-4 bg-gray-50/80 hover:bg-gray-50/90 [&[data-state=open]>svg]:rotate-180">
+            <div className="flex items-center gap-2 text-[#963E56]">
+              <Activity className="h-5 w-5" />
+              <span className="font-semibold">Gebruikersactiviteit</span>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="p-6">
+              <Card>
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-lg">Filters</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4">
+                    <div className="w-full sm:w-auto">
+                      <label className="text-sm font-medium mb-1.5 block">Selecteer Gebruiker</label>
+                      <Select
+                        value={selectedUser}
+                        onValueChange={setSelectedUser}
+                      >
+                        <SelectTrigger className="w-full sm:w-[250px]">
+                          <SelectValue placeholder="Alle gebruikers" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Alle gebruikers</SelectItem>
+                          {users.map(user => (
+                            <SelectItem key={user.email} value={user.email}>
+                              {user.email} {user.admin ? '(Admin)' : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="w-full sm:w-auto">
+                      <label className="text-sm font-medium mb-1.5 block">Selecteer Datum</label>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant={"outline"}
+                            className="w-full sm:w-[240px] justify-start text-left font-normal"
+                          >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {selectedDate ? (
+                              format(selectedDate, "d MMMM yyyy", { locale: nl })
+                            ) : (
+                              <span>Kies een datum</span>
+                            )}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={selectedDate}
+                            onSelect={(date) => date && setSelectedDate(date)}
+                            initialFocus
+                            locale={nl}
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setSelectedDate(new Date());
+                        setSelectedUser("all");
+                      }}
+                    >
+                      Reset Filters
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="mt-6 rounded-lg border shadow-sm">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-gray-50/50">
+                      <TableHead className="w-[180px]">Tijdstip</TableHead>
+                      <TableHead>Gebruiker</TableHead>
+                      <TableHead>Actie</TableHead>
+                      <TableHead>Object Type</TableHead>
+                      <TableHead>Object Naam</TableHead>
+                      <TableHead>Details</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredLogs.map((log) => (
+                      <TableRow key={log.id}>
+                        <TableCell className="whitespace-nowrap font-medium">
+                          {format(new Date(log.timestamp), "d MMM yyyy HH:mm:ss", { locale: nl })}
+                        </TableCell>
+                        <TableCell>{log.userEmail}</TableCell>
+                        <TableCell>{log.action}</TableCell>
+                        <TableCell>{log.targetType || "-"}</TableCell>
+                        <TableCell>{log.targetName || "-"}</TableCell>
+                        <TableCell className="max-w-xs truncate">
+                          {log.details || "-"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {filteredLogs.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-gray-500">
+                          <Activity className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                          <p>Geen activiteiten gevonden voor de geselecteerde filters</p>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <p className="text-sm text-gray-500 mt-4">
+                Totaal aantal activiteiten: {filteredLogs.length}
+              </p>
             </div>
           </AccordionContent>
         </AccordionItem>

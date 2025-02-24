@@ -25,58 +25,32 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { db } from "@/lib/firebase";
 import { ref, push, remove, update, onValue } from "firebase/database";
-import { Calendar as CalendarIcon, Edit2, Trash2, Users } from "lucide-react";
 import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Calendar as CalendarIcon,
+  Edit2,
+  Trash2,
+  Users,
+  Users2,
+  CalendarDays,
+  Building,
+} from "lucide-react";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
 import { nl } from "date-fns/locale";
-import { cn } from "@/lib/utils";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-} from "@/components/ui/command"
+import { Card, CardContent } from "@/components/ui/card";
+import { CollapsibleSection } from "@/components/ui/collapsible-section";
 
 const planningSchema = z.object({
   volunteerId: z.string().min(1, "Vrijwilliger is verplicht"),
   roomId: z.string().min(1, "Ruimte is verplicht"),
-  startDate: z.string().min(1, "Startdatum is verplicht"),
-  endDate: z.string().min(1, "Einddatum is verplicht"),
-}).refine((data) => {
-  const start = new Date(data.startDate);
-  const end = new Date(data.endDate);
-  return end >= start;
-}, {
-  message: "Einddatum moet na startdatum liggen",
-  path: ["endDate"],
-});
-
-const bulkPlanningSchema = z.object({
-  volunteerIds: z.array(z.string()).min(1, "Selecteer ten minste één vrijwilliger"),
-  roomIds: z.array(z.string()).min(1, "Selecteer ten minste één ruimte"),
   startDate: z.string().min(1, "Startdatum is verplicht"),
   endDate: z.string().min(1, "Einddatum is verplicht"),
 }).refine((data) => {
@@ -114,19 +88,10 @@ export default function Planning() {
   const [editingPlanning, setEditingPlanning] = useState<Planning | null>(null);
   const [deletePlanningId, setDeletePlanningId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   const { toast } = useToast();
 
   const form = useForm<z.infer<typeof planningSchema>>({
     resolver: zodResolver(planningSchema),
-  });
-
-  const bulkForm = useForm<z.infer<typeof bulkPlanningSchema>>({
-    resolver: zodResolver(bulkPlanningSchema),
-    defaultValues: {
-      volunteerIds: [],
-      roomIds: [],
-    },
   });
 
   useState(() => {
@@ -188,34 +153,15 @@ export default function Planning() {
     }
   };
 
-  const handleBulkPlan = async (data: z.infer<typeof bulkPlanningSchema>) => {
-    try {
-      const promises = data.volunteerIds.flatMap(volunteerId =>
-        data.roomIds.map(roomId =>
-          push(ref(db, "plannings"), {
-            volunteerId,
-            roomId,
-            startDate: data.startDate,
-            endDate: data.endDate,
-          })
-        )
-      );
-
-      await Promise.all(promises);
-
-      toast({
-        title: "Succes",
-        description: "Bulk planning succesvol toegevoegd",
-      });
-      bulkForm.reset();
-      setBulkDialogOpen(false);
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Fout",
-        description: "Kon bulk planning niet opslaan",
-      });
-    }
+  const handleEdit = (planning: Planning) => {
+    setEditingPlanning(planning);
+    form.reset({
+      volunteerId: planning.volunteerId,
+      roomId: planning.roomId,
+      startDate: planning.startDate,
+      endDate: planning.endDate,
+    });
+    setDialogOpen(true);
   };
 
   const handleDelete = async (id: string) => {
@@ -235,39 +181,91 @@ export default function Planning() {
     }
   };
 
-  const handleEdit = (planning: Planning) => {
-    setEditingPlanning(planning);
-    form.reset({
-      volunteerId: planning.volunteerId,
-      roomId: planning.roomId,
-      startDate: planning.startDate,
-      endDate: planning.endDate,
-    });
-    setDialogOpen(true);
-  };
+  // Calculate statistics
+  const totalScheduledVolunteers = plannings.length;
+  const uniqueVolunteersScheduled = new Set(plannings.map(p => p.volunteerId)).size;
+  const uniqueRoomsScheduled = new Set(plannings.map(p => p.roomId)).size;
 
-  const calendarClassNames = {
-    months: "flex flex-col sm:flex-row space-y-4 sm:space-x-4 sm:space-y-0",
-    month: "space-y-4",
-    caption: "flex justify-center pt-1 relative items-center",
-    caption_label: "text-sm font-medium",
-    nav: "space-x-1 flex items-center",
-    nav_button: "h-7 w-7 bg-transparent p-0 hover:opacity-100",
-    nav_button_previous: "absolute left-1",
-    nav_button_next: "absolute right-1",
-    table: "w-full border-collapse space-y-1",
-    head_row: "flex",
-    head_cell: "text-muted-foreground rounded-md w-10 font-normal text-[0.8rem] h-10 flex items-center justify-center",
-    row: "flex w-full mt-2",
-    cell: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20 [&:has([aria-selected])]:bg-accent first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md",
-    day: "h-10 w-10 p-0 font-normal aria-selected:opacity-100",
-    day_selected: "bg-[#6BB85C] text-white hover:bg-[#6BB85C]/90 focus:bg-[#6BB85C] rounded-md",
-    day_today: "bg-accent text-accent-foreground",
-    day_outside: "text-muted-foreground opacity-50",
-    day_disabled: "text-muted-foreground opacity-50",
-    day_range_middle: "aria-selected:bg-accent aria-selected:text-accent-foreground",
-    day_hidden: "invisible",
-  };
+  // Get all plannings sorted by start date
+  const sortedPlannings = [...plannings].sort((a, b) => {
+    return new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
+  });
+
+  // Group plannings by status
+  const { activePlannings, upcomingPlannings, pastPlannings } = plannings.reduce((acc, planning) => {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const start = new Date(planning.startDate);
+    const end = new Date(planning.endDate);
+
+    if (start <= now && now <= end) {
+      acc.activePlannings.push(planning);
+    } else if (start > now) {
+      acc.upcomingPlannings.push(planning);
+    } else {
+      acc.pastPlannings.push(planning);
+    }
+    return acc;
+  }, { activePlannings: [], upcomingPlannings: [], pastPlannings: [] });
+
+  const PlanningTable = ({ plannings, emptyMessage }: {plannings: Planning[], emptyMessage: string}) => (
+    <div className="rounded-lg border bg-card overflow-x-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Vrijwilliger</TableHead>
+            <TableHead>Ruimte</TableHead>
+            <TableHead>Periode</TableHead>
+            <TableHead className="w-[100px]">Acties</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {plannings.map((planning) => {
+            const volunteer = volunteers.find((v) => v.id === planning.volunteerId);
+            const room = rooms.find((r) => r.id === planning.roomId);
+            return (
+              <TableRow key={planning.id}>
+                <TableCell className="font-medium">
+                  {volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : "-"}
+                </TableCell>
+                <TableCell>{room ? room.name : "-"}</TableCell>
+                <TableCell className="whitespace-nowrap">
+                  {format(new Date(planning.startDate), "d MMM yyyy", { locale: nl })} - {format(new Date(planning.endDate), "d MMM yyyy", { locale: nl })}
+                </TableCell>
+                <TableCell>
+                  <div className="flex space-x-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleEdit(planning)}
+                      className="text-[#6BB85C] hover:text-[#6BB85C] hover:bg-[#6BB85C]/10"
+                    >
+                      <Edit2 className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setDeletePlanningId(planning.id)}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+          {plannings.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={4} className="text-center py-6 text-gray-500">
+                {emptyMessage}
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -352,38 +350,13 @@ export default function Planning() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Startdatum</FormLabel>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <FormControl>
-                              <Button
-                                variant="outline"
-                                className={cn(
-                                  "w-full pl-3 text-left font-normal",
-                                  !field.value && "text-muted-foreground"
-                                )}
-                              >
-                                {field.value ? (
-                                  format(new Date(field.value), "d MMMM yyyy", { locale: nl })
-                                ) : (
-                                  <span>Kies een datum</span>
-                                )}
-                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                              </Button>
-                            </FormControl>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-4 bg-white rounded-lg shadow-lg border" align="start">
-                            <Calendar
-                              mode="single"
-                              selected={field.value ? new Date(field.value) : undefined}
-                              onSelect={(date) => field.onChange(date?.toISOString())}
-                              initialFocus
-                              locale={nl}
-                              weekStartsOn={1}
-                              classNames={calendarClassNames}
-                              disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
-                            />
-                          </PopoverContent>
-                        </Popover>
+                        <FormControl>
+                          <Input
+                            type="date"
+                            {...field}
+                            min={new Date().toISOString().split('T')[0]}
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -394,38 +367,13 @@ export default function Planning() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Einddatum</FormLabel>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <FormControl>
-                              <Button
-                                variant="outline"
-                                className={cn(
-                                  "w-full pl-3 text-left font-normal",
-                                  !field.value && "text-muted-foreground"
-                                )}
-                              >
-                                {field.value ? (
-                                  format(new Date(field.value), "d MMMM yyyy", { locale: nl })
-                                ) : (
-                                  <span>Kies een datum</span>
-                                )}
-                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                              </Button>
-                            </FormControl>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-4 bg-white rounded-lg shadow-lg border" align="start">
-                            <Calendar
-                              mode="single"
-                              selected={field.value ? new Date(field.value) : undefined}
-                              onSelect={(date) => field.onChange(date?.toISOString())}
-                              initialFocus
-                              locale={nl}
-                              weekStartsOn={1}
-                              classNames={calendarClassNames}
-                              disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
-                            />
-                          </PopoverContent>
-                        </Popover>
+                        <FormControl>
+                          <Input
+                            type="date"
+                            {...field}
+                            min={form.watch("startDate") || new Date().toISOString().split('T')[0]}
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -437,298 +385,89 @@ export default function Planning() {
               </Form>
             </DialogContent>
           </Dialog>
-
-          <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-[#D9A347] hover:bg-[#D9A347]/90 text-white border-none">
-                <Users className="h-4 w-4 mr-2" />
-                Bulk Inplannen
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>Bulk Planning</DialogTitle>
-              </DialogHeader>
-              <Form {...bulkForm}>
-                <form onSubmit={bulkForm.handleSubmit(handleBulkPlan)} className="space-y-4">
-                  <FormField
-                    control={bulkForm.control}
-                    name="volunteerIds"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Vrijwilligers</FormLabel>
-                        <Select
-                          onValueChange={(value) => {
-                            const currentValues = field.value || [];
-                            const newValues = currentValues.includes(value)
-                              ? currentValues.filter((v) => v !== value)
-                              : [...currentValues, value];
-                            field.onChange(newValues);
-                          }}
-                          value={field.value?.[field.value.length - 1] || ""}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Selecteer vrijwilligers" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {volunteers.map((volunteer) => (
-                              <SelectItem
-                                key={volunteer.id}
-                                value={volunteer.id}
-                                className={cn(
-                                  "cursor-pointer",
-                                  field.value?.includes(volunteer.id) && "bg-primary/10"
-                                )}
-                              >
-                                {volunteer.firstName} {volunteer.lastName}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {field.value?.map((volunteerId) => {
-                            const volunteer = volunteers.find((v) => v.id === volunteerId);
-                            return (
-                              <div
-                                key={volunteerId}
-                                className="bg-primary/10 text-primary px-2 py-1 rounded-md text-sm flex items-center gap-2"
-                              >
-                                <span>
-                                  {volunteer?.firstName} {volunteer?.lastName}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    field.onChange(field.value.filter((id) => id !== volunteerId))
-                                  }
-                                  className="text-primary hover:text-primary/80"
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={bulkForm.control}
-                    name="roomIds"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Ruimtes</FormLabel>
-                        <Select
-                          onValueChange={(value) => {
-                            const currentValues = field.value || [];
-                            const newValues = currentValues.includes(value)
-                              ? currentValues.filter((v) => v !== value)
-                              : [...currentValues, value];
-                            field.onChange(newValues);
-                          }}
-                          value={field.value?.[field.value.length - 1] || ""}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Selecteer ruimtes" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {rooms.map((room) => (
-                              <SelectItem
-                                key={room.id}
-                                value={room.id}
-                                className={cn(
-                                  "cursor-pointer",
-                                  field.value?.includes(room.id) && "bg-primary/10"
-                                )}
-                              >
-                                {room.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {field.value?.map((roomId) => {
-                            const room = rooms.find((r) => r.id === roomId);
-                            return (
-                              <div
-                                key={roomId}
-                                className="bg-primary/10 text-primary px-2 py-1 rounded-md text-sm flex items-center gap-2"
-                              >
-                                <span>{room?.name}</span>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    field.onChange(field.value.filter((id) => id !== roomId))
-                                  }
-                                  className="text-primary hover:text-primary/80"
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={bulkForm.control}
-                    name="startDate"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Startdatum</FormLabel>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <FormControl>
-                              <Button
-                                variant="outline"
-                                className={cn(
-                                  "w-full pl-3 text-left font-normal",
-                                  !field.value && "text-muted-foreground"
-                                )}
-                              >
-                                {field.value ? (
-                                  format(new Date(field.value), "d MMMM yyyy", { locale: nl })
-                                ) : (
-                                  <span>Kies een datum</span>
-                                )}
-                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                              </Button>
-                            </FormControl>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-4 bg-white rounded-lg shadow-lg border" align="start">
-                            <Calendar
-                              mode="single"
-                              selected={field.value ? new Date(field.value) : undefined}
-                              onSelect={(date) => field.onChange(date?.toISOString())}
-                              initialFocus
-                              locale={nl}
-                              weekStartsOn={1}
-                              classNames={calendarClassNames}
-                              disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
-                            />
-                          </PopoverContent>
-                        </Popover>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={bulkForm.control}
-                    name="endDate"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Einddatum</FormLabel>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <FormControl>
-                              <Button
-                                variant="outline"
-                                className={cn(
-                                  "w-full pl-3 text-left font-normal",
-                                  !field.value && "text-muted-foreground"
-                                )}
-                              >
-                                {field.value ? (
-                                  format(new Date(field.value), "d MMMM yyyy", { locale: nl })
-                                ) : (
-                                  <span>Kies een datum</span>
-                                )}
-                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                              </Button>
-                            </FormControl>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-4 bg-white rounded-lg shadow-lg border" align="start">
-                            <Calendar
-                              mode="single"
-                              selected={field.value ? new Date(field.value) : undefined}
-                              onSelect={(date) => field.onChange(date?.toISOString())}
-                              initialFocus
-                              locale={nl}
-                              weekStartsOn={1}
-                              classNames={calendarClassNames}
-                              disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
-                            />
-                          </PopoverContent>
-                        </Popover>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <Button type="submit" className="w-full bg-[#D9A347] hover:bg-[#D9A347]/90 text-white">
-                    Bulk Planning Toevoegen
-                  </Button>
-                </form>
-              </Form>
-            </DialogContent>
-          </Dialog>
         </div>
       </div>
 
-      <div className="rounded-lg border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Vrijwilliger</TableHead>
-              <TableHead>Ruimte</TableHead>
-              <TableHead>Startdatum</TableHead>
-              <TableHead>Einddatum</TableHead>
-              <TableHead className="w-[100px]">Acties</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {plannings.map((planning) => {
-              const volunteer = volunteers.find((v) => v.id === planning.volunteerId);
-              const room = rooms.find((r) => r.id === planning.roomId);
-              return (
-                <TableRow key={planning.id}>
-                  <TableCell>
-                    {volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : "-"}
-                  </TableCell>
-                  <TableCell>{room ? room.name : "-"}</TableCell>
-                  <TableCell>{format(new Date(planning.startDate), "d MMMM yyyy", { locale: nl })}</TableCell>
-                  <TableCell>{format(new Date(planning.endDate), "d MMMM yyyy", { locale: nl })}</TableCell>
-                  <TableCell className="flex space-x-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleEdit(planning)}
-                      className="text-[#6BB85C] hover:text-[#6BB85C] hover:bg-[#6BB85C]/10"
-                    >
-                      <Edit2 className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeletePlanningId(planning.id)}
-                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-            {plannings.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center py-6 text-gray-500">
-                  Geen planningen gevonden
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      <CollapsibleSection
+        title="Planning Overzicht"
+        icon={<CalendarDays className="h-5 w-5 text-primary" />}
+        defaultOpen={true}
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center">
+                <CalendarDays className="h-8 w-8 text-primary/80" />
+                <div className="ml-4">
+                  <h3 className="text-sm font-medium text-gray-500">Totaal Planningen</h3>
+                  <p className="text-2xl font-bold text-primary">{plannings.length}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center">
+                <Users2 className="h-8 w-8 text-primary/80" />
+                <div className="ml-4">
+                  <h3 className="text-sm font-medium text-gray-500">Unieke Vrijwilligers</h3>
+                  <p className="text-2xl font-bold text-primary">{uniqueVolunteersScheduled}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center">
+                <Building className="h-8 w-8 text-primary/80" />
+                <div className="ml-4">
+                  <h3 className="text-sm font-medium text-gray-500">Bezette Ruimtes</h3>
+                  <p className="text-2xl font-bold text-primary">{uniqueRoomsScheduled}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Actieve Planningen"
+        icon={<Users className="h-5 w-5 text-primary" />}
+        defaultOpen={true}
+      >
+        <PlanningTable 
+          plannings={activePlannings} 
+          emptyMessage="Geen actieve planningen gevonden"
+        />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Toekomstige Planningen"
+        icon={<Users className="h-5 w-5 text-primary" />}
+        defaultOpen={true}
+      >
+        <PlanningTable 
+          plannings={upcomingPlannings} 
+          emptyMessage="Geen toekomstige planningen gevonden"
+        />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Afgelopen Planningen"
+        icon={<Users className="h-5 w-5 text-primary" />}
+        defaultOpen={false}
+      >
+        <PlanningTable 
+          plannings={pastPlannings} 
+          emptyMessage="Geen afgelopen planningen gevonden"
+        />
+      </CollapsibleSection>
 
       <AlertDialog
         open={!!deletePlanningId}
-        onOpenChange={() => setDeletePlanningId(null)}
+        onOpenChange={(open) => !open && setDeletePlanningId(null)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>

@@ -5,30 +5,54 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { auth } from "@/lib/firebase";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { LockKeyhole, Mail } from "lucide-react";
 import { Link } from "wouter";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { useState } from "react";
+import { logUserAction } from "@/lib/activity-logger";
 
 const loginSchema = z.object({
   email: z.string().email("Ongeldig e-mailadres"),
   password: z.string().min(6, "Wachtwoord moet minimaal 6 tekens bevatten"),
 });
 
+const resetSchema = z.object({
+  email: z.string().email("Ongeldig e-mailadres"),
+});
+
 type LoginFormData = z.infer<typeof loginSchema>;
+type ResetFormData = z.infer<typeof resetSchema>;
 
 export default function Login() {
   const { toast } = useToast();
   const [_, setLocation] = useLocation();
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
 
   const form = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
   });
 
+  const resetForm = useForm<ResetFormData>({
+    resolver: zodResolver(resetSchema),
+  });
+
   const onSubmit = async (data: LoginFormData) => {
     try {
       await signInWithEmailAndPassword(auth, data.email, data.password);
+      // Test logging with more detailed information
+      await logUserAction(
+        "Gebruiker ingelogd",
+        `Gebruiker ${data.email} heeft succesvol ingelogd`,
+        {
+          type: "auth",
+          id: data.email,
+          name: data.email
+        }
+      );
       setLocation("/");
     } catch (error) {
       toast({
@@ -39,10 +63,32 @@ export default function Login() {
     }
   };
 
+  const onResetSubmit = async (data: ResetFormData) => {
+    try {
+      await sendPasswordResetEmail(auth, data.email);
+      await logUserAction(
+        "Wachtwoord reset aangevraagd",
+        `Wachtwoord reset aangevraagd voor ${data.email}`
+      );
+      toast({
+        title: "Wachtwoord reset link verzonden",
+        description: "Controleer je e-mail voor instructies om je wachtwoord te resetten.",
+      });
+      setResetDialogOpen(false);
+      resetForm.reset();
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Fout",
+        description: "Kon geen wachtwoord reset link verzenden. Controleer je e-mailadres.",
+      });
+    }
+  };
+
   return (
-    <div 
+    <div
       className="min-h-screen flex items-center justify-center bg-no-repeat bg-cover bg-center relative p-4"
-      style={{ 
+      style={{
         backgroundImage: `url('/static/123.jpg')`
       }}
     >
@@ -53,9 +99,9 @@ export default function Login() {
           <CardContent className="pt-6 px-8">
             <div className="text-center mb-8">
               <div className="w-full flex justify-center items-center">
-                <img 
-                  src="/static/Naamloos.png" 
-                  alt="MEFEN" 
+                <img
+                  src="/static/Naamloos.png"
+                  alt="MEFEN"
                   className="h-24 mx-auto mb-4"
                 />
               </div>
@@ -102,8 +148,18 @@ export default function Login() {
                 )}
               </div>
 
-              <Button 
-                type="submit" 
+              <div className="text-right">
+                <button
+                  type="button"
+                  onClick={() => setResetDialogOpen(true)}
+                  className="text-[#963E56] hover:underline font-medium text-sm"
+                >
+                  Wachtwoord vergeten?
+                </button>
+              </div>
+
+              <Button
+                type="submit"
                 className="w-full h-12 text-base font-medium bg-[#963E56] hover:bg-[#963E56]/90 transition-colors duration-300"
               >
                 Inloggen
@@ -122,6 +178,40 @@ export default function Login() {
           MEFEN Vrijwilligers Management Systeem
         </p>
       </div>
+
+      {/* Password Reset Dialog */}
+      <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Wachtwoord Resetten</DialogTitle>
+          </DialogHeader>
+          <Form {...resetForm}>
+            <form onSubmit={resetForm.handleSubmit(onResetSubmit)} className="space-y-4">
+              <FormField
+                control={resetForm.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>E-mailadres</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="email"
+                        placeholder="Voer je e-mailadres in"
+                        className="h-10"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <Button type="submit" className="w-full bg-[#963E56] hover:bg-[#963E56]/90">
+                Reset link versturen
+              </Button>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

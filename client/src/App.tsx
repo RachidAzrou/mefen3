@@ -6,6 +6,7 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Login from "@/pages/login";
 import Register from "@/pages/register";
+import Profile from "@/pages/profile";
 import Volunteers from "@/pages/volunteers";
 import Rooms from "@/pages/rooms";
 import Materials from "@/pages/materials";
@@ -17,8 +18,18 @@ import Settings from "@/pages/settings";
 import { Sidebar } from "@/components/layout/sidebar";
 import { auth } from "./lib/firebase";
 import { useAuthState } from "react-firebase-hooks/auth";
+import { useNotifications } from "@/hooks/use-notifications";
+import React from 'react';
 
 function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
+  const { permission, requestPermission } = useNotifications();
+
+  React.useEffect(() => {
+    if (permission === 'default') {
+      requestPermission();
+    }
+  }, [permission, requestPermission]);
+
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
@@ -63,6 +74,7 @@ function Router() {
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
       <Route path="/" component={() => <PrivateRoute component={Dashboard} />} />
+      <Route path="/profile" component={() => <PrivateRoute component={Profile} />} />
       <Route path="/planning" component={() => <PrivateRoute component={Planning} />} />
       <Route path="/volunteers" component={() => <PrivateRoute component={Volunteers} />} />
       <Route path="/rooms" component={() => <PrivateRoute component={Rooms} />} />
