@@ -2,23 +2,17 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { db } from "@/lib/firebase";
 import { ref, onValue, remove, push } from "firebase/database";
 import { useToast } from "@/hooks/use-toast";
-import { Download, Upload, Users, X, FileUp, FileDown } from "lucide-react";
+import { Download, Upload, Users, X, FileUp, FileDown, FileJson } from "lucide-react";
 import { PDFDownloadLink } from "@react-pdf/renderer";
 import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer';
 import { format } from 'date-fns';
 import { nl } from 'date-fns/locale';
 import { useRole } from "@/hooks/use-role";
+import { logUserAction, UserActionTypes } from "@/lib/activity-logger";
 
 const styles = StyleSheet.create({
   page: {
@@ -191,14 +185,12 @@ export default function ImportExport() {
           status: 'pending'
         }));
 
-        // Sort by submission date, newest first
-        pendingList.sort((a, b) => 
+        pendingList.sort((a, b) =>
           new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
         );
 
         setPendingVolunteers(pendingList);
 
-        // Show notification for new registrations
         if (pendingList.length > 0) {
           const latestSubmission = new Date(pendingList[0].submittedAt);
           const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
@@ -207,7 +199,7 @@ export default function ImportExport() {
             toast({
               title: "Nieuwe Aanmelding",
               description: "Er is een nieuwe vrijwilliger aanmelding binnengekomen.",
-              duration: 5000,
+              duration: 3000, // Updated duration
             });
           }
         }
@@ -224,21 +216,36 @@ export default function ImportExport() {
 
   const handleImport = async () => {
     try {
+      const importedVolunteers = [];
+
       for (const volunteerId of selectedVolunteers) {
         const volunteer = pendingVolunteers.find(v => v.id === volunteerId);
         if (volunteer) {
-          await push(ref(db, "volunteers"), {
+          const newVolunteerRef = await push(ref(db, "volunteers"), {
             firstName: volunteer.firstName,
             lastName: volunteer.lastName,
             phoneNumber: volunteer.phoneNumber
           });
           await remove(ref(db, `pending_volunteers/${volunteerId}`));
+
+          importedVolunteers.push(`${volunteer.firstName} ${volunteer.lastName}`);
         }
       }
+
+      await logUserAction(
+        UserActionTypes.IMPORT_VOLUNTEERS,
+        `${selectedVolunteers.length} vrijwilligers geïmporteerd`,
+        {
+          type: "import",
+          id: new Date().toISOString(),
+          name: importedVolunteers.join(", ")
+        }
+      );
 
       toast({
         title: "Succes",
         description: "Geselecteerde vrijwilligers zijn succesvol geïmporteerd.",
+        duration: 3000,
       });
       setSelectedVolunteers([]);
     } catch (error) {
@@ -246,19 +253,37 @@ export default function ImportExport() {
         variant: "destructive",
         title: "Fout",
         description: "Er is iets misgegaan bij het importeren.",
+        duration: 3000,
       });
     }
   };
 
   const handleReject = async () => {
     try {
+      const rejectedVolunteers = [];
+
       for (const volunteerId of selectedVolunteers) {
-        await remove(ref(db, `pending_volunteers/${volunteerId}`));
+        const volunteer = pendingVolunteers.find(v => v.id === volunteerId);
+        if (volunteer) {
+          await remove(ref(db, `pending_volunteers/${volunteerId}`));
+          rejectedVolunteers.push(`${volunteer.firstName} ${volunteer.lastName}`);
+        }
       }
+
+      await logUserAction(
+        UserActionTypes.VOLUNTEER_BULK_DELETE,
+        `${selectedVolunteers.length} vrijwilliger aanmeldingen geweigerd`,
+        {
+          type: "volunteer",
+          id: new Date().toISOString(),
+          name: rejectedVolunteers.join(", ")
+        }
+      );
 
       toast({
         title: "Succes",
         description: "Geselecteerde aanmeldingen zijn succesvol geweigerd.",
+        duration: 3000,
       });
       setSelectedVolunteers([]);
     } catch (error) {
@@ -266,20 +291,20 @@ export default function ImportExport() {
         variant: "destructive",
         title: "Fout",
         description: "Er is iets misgegaan bij het weigeren van de aanmeldingen.",
+        duration: 3000,
       });
     }
   };
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto px-4 py-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Users className="h-8 w-8 text-[#963E56]" />
+          <FileJson className="h-8 w-8 text-[#963E56]" />
           <h1 className="text-2xl sm:text-3xl font-bold text-[#963E56]">Import & Export</h1>
         </div>
       </div>
 
-      {/* Import Section */}
       <Card className="shadow-md">
         <CardHeader className="border-b bg-gray-50/80">
           <CardTitle className="flex items-center gap-2 text-[#963E56] text-lg sm:text-xl">
@@ -366,7 +391,6 @@ export default function ImportExport() {
         </CardContent>
       </Card>
 
-      {/* Export Section */}
       <Card className="shadow-md">
         <CardHeader className="border-b bg-gray-50/80">
           <CardTitle className="flex items-center gap-2 text-[#963E56] text-lg sm:text-xl">
@@ -406,6 +430,17 @@ export default function ImportExport() {
                 <PDFDownloadLink
                   document={<VolunteersPDF volunteers={volunteers} fields={exportFields} />}
                   fileName={`vrijwilligers-${format(new Date(), 'yyyy-MM-dd')}.pdf`}
+                  onClick={async () => {
+                    await logUserAction(
+                      UserActionTypes.GENERATE_VOLUNTEERS_PDF,
+                      `Vrijwilligers PDF gegenereerd (${volunteers.length} vrijwilligers)`,
+                      {
+                        type: "export",
+                        id: new Date().toISOString(),
+                        name: `vrijwilligers-${format(new Date(), 'yyyy-MM-dd')}.pdf`
+                      }
+                    );
+                  }}
                 >
                   {({ loading }) => (
                     <Button

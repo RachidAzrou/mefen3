@@ -5,51 +5,136 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { db } from "@/lib/firebase";
-import { ref, push } from "firebase/database";
-import { useToast } from "@/hooks/use-toast";
+import { ref, push, get } from "firebase/database";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { useLocation } from "wouter";
+import { useState } from "react";
 
 const registerSchema = z.object({
-  firstName: z.string().min(1, "Voornaam is verplicht"),
-  lastName: z.string().min(1, "Achternaam is verplicht"),
-  phoneNumber: z.string().min(1, "Telefoonnummer is verplicht"),
+  firstName: z.string()
+    .min(1, "Voornaam is verplicht")
+    .transform(val => val.trim())
+    .refine(val => val.length > 0, "Voornaam mag niet leeg zijn"),
+  lastName: z.string()
+    .min(1, "Achternaam is verplicht")
+    .transform(val => val.trim())
+    .refine(val => val.length > 0, "Achternaam mag niet leeg zijn"),
+  phoneNumber: z.string()
+    .min(1, "Telefoonnummer is verplicht")
+    .transform(val => val.replace(/[^\d]/g, ''))
+    .refine(val => val.length >= 10, "Telefoonnummer moet minimaal 10 cijfers bevatten")
 });
 
 type RegisterFormData = z.infer<typeof registerSchema>;
 
 export default function Register() {
-  const { toast } = useToast();
-  const [_, setLocation] = useLocation();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [registrationStatus, setRegistrationStatus] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
 
   const form = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
   });
 
-  const onSubmit = async (data: RegisterFormData) => {
+  const normalizeString = (str: string) => {
+    return str.replace(/\s+/g, ' ').toLowerCase().trim();
+  };
+
+  const normalizePhoneNumber = (phone: string) => {
+    const cleaned = phone.replace(/[^\d]/g, '');
+    if (cleaned.startsWith('31')) {
+      return cleaned;
+    } else if (cleaned.startsWith('0')) {
+      return '31' + cleaned.substring(1);
+    }
+    return cleaned;
+  };
+
+  const checkForDuplicates = async (data: RegisterFormData) => {
     try {
-      // Create the pending volunteer record
-      await push(ref(db, "pending_volunteers"), {
-        firstName: data.firstName,
-        lastName: data.lastName,
-        phoneNumber: data.phoneNumber,
+      const normalizedInput = {
+        firstName: normalizeString(data.firstName),
+        lastName: normalizeString(data.lastName),
+        phoneNumber: normalizePhoneNumber(data.phoneNumber)
+      };
+
+      const pendingRef = ref(db, "pending_volunteers");
+      const pendingSnapshot = await get(pendingRef);
+      const pendingVolunteers = pendingSnapshot.val() || {};
+
+      const volunteersRef = ref(db, "volunteers");
+      const volunteersSnapshot = await get(volunteersRef);
+      const volunteers = volunteersSnapshot.val() || {};
+
+      const isDuplicate = [...Object.values(pendingVolunteers), ...Object.values(volunteers)].some(
+        (volunteer: any) => {
+          if (!volunteer?.firstName || !volunteer?.lastName || !volunteer?.phoneNumber) {
+            return false;
+          }
+
+          const normalizedVolunteer = {
+            firstName: normalizeString(volunteer.firstName),
+            lastName: normalizeString(volunteer.lastName),
+            phoneNumber: normalizePhoneNumber(volunteer.phoneNumber)
+          };
+
+          const nameMatch = 
+            normalizedVolunteer.firstName === normalizedInput.firstName &&
+            normalizedVolunteer.lastName === normalizedInput.lastName;
+
+          const phoneMatch = normalizedVolunteer.phoneNumber === normalizedInput.phoneNumber;
+
+          return nameMatch || phoneMatch;
+        }
+      );
+
+      return isDuplicate;
+    } catch (error) {
+      console.error("Error checking for duplicates:", error);
+      return false;
+    }
+  };
+
+  const onSubmit = async (data: RegisterFormData) => {
+    if (isSubmitting) return;
+
+    try {
+      setIsSubmitting(true);
+      setRegistrationStatus(null);
+
+      const isDuplicate = await checkForDuplicates(data);
+
+      if (isDuplicate) {
+        setRegistrationStatus({
+          type: 'error',
+          message: 'Er bestaat al een registratie met deze gegevens.'
+        });
+        return;
+      }
+
+      const normalizedData = {
+        firstName: data.firstName.trim(),
+        lastName: data.lastName.trim(),
+        phoneNumber: normalizePhoneNumber(data.phoneNumber),
         submittedAt: new Date().toISOString(),
         status: 'pending'
-      });
+      };
 
-      toast({
-        title: "Succesvol aangemeld",
-        description: "Je aanmelding is ontvangen en wordt bekeken door de beheerder.",
-      });
+      await push(ref(db, "pending_volunteers"), normalizedData);
 
-      // Redirect to login
-      setLocation("/login");
+      setRegistrationStatus({
+        type: 'success',
+        message: 'Je aanmelding is ontvangen en wordt bekeken door de beheerder.'
+      });
+      form.reset();
     } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Fout",
-        description: "Er is iets misgegaan bij het aanmelden.",
+      setRegistrationStatus({
+        type: 'error',
+        message: 'Er is iets misgegaan bij het aanmelden.'
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -76,6 +161,16 @@ export default function Register() {
                 Vul het formulier in om je aan te melden als vrijwilliger
               </p>
             </div>
+
+            {registrationStatus && (
+              <div className={`mb-6 p-4 rounded-lg text-sm ${
+                registrationStatus.type === 'success' 
+                  ? 'bg-white border' 
+                  : 'bg-red-50 border border-red-200 text-red-800'
+              }`}>
+                <p>{registrationStatus.message}</p>
+              </div>
+            )}
 
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 sm:space-y-5">
@@ -136,8 +231,9 @@ export default function Register() {
                 <Button 
                   type="submit" 
                   className="w-full h-10 sm:h-12 text-sm sm:text-base font-medium bg-[#963E56] hover:bg-[#963E56]/90 transition-colors duration-300"
+                  disabled={isSubmitting}
                 >
-                  Aanmelden
+                  {isSubmitting ? "Bezig met aanmelden..." : "Aanmelden"}
                 </Button>
               </form>
             </Form>

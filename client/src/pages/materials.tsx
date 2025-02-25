@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -30,27 +31,51 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { db } from "@/lib/firebase";
-import { ref, push, update, remove, onValue } from "firebase/database";
-import { Package2, Edit2, RotateCcw, Search, Plus, Trash2, CheckSquare, Square } from "lucide-react";
+import { ref, push, remove, update, onValue } from "firebase/database";
+import {
+  Package2,
+  Settings2,
+  Users,
+  Plus,
+  CheckSquare,
+  Square,
+  RotateCcw,
+  Search,
+  Flashlight,
+} from "lucide-react";
+import {
+  GiMonclerJacket,
+  GiWalkieTalkie,
+} from 'react-icons/gi';
+import {
+  TbJacket,
+} from 'react-icons/tb';
 import { useRole } from "@/hooks/use-role";
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input as InputComponent } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Edit2 } from 'lucide-react';
+import { logUserAction, UserActionTypes } from "@/lib/activity-logger";
+
+
+// Add type definition for activity log
+type ActivityLog = {
+  id: string;
+  action: 'checkout' | 'return';
+  materialTypeId: string;
+  materialNumber: number;
+  volunteerId: string;
+  timestamp: string;
+};
 
 
 const materialSchema = z.object({
@@ -84,6 +109,15 @@ type Volunteer = {
   lastName: string;
 };
 
+const getMaterialIcon = (materialName: string) => {
+  const name = materialName.toLowerCase();
+  if (name.includes('jas')) return <GiMonclerJacket className="h-8 w-8 text-primary/80" />;
+  if (name.includes('hesje')) return <TbJacket className="h-8 w-8 text-primary/80" />;
+  if (name.includes('lamp')) return <Flashlight className="h-8 w-8 text-primary/80" />;
+  if (name.includes('walkie')) return <GiWalkieTalkie className="h-8 w-8 text-primary/80" />;
+  return <Package2 className="h-8 w-8 text-primary/80" />;
+};
+
 export default function Materials() {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [materialTypes, setMaterialTypes] = useState<MaterialType[]>([]);
@@ -97,6 +131,7 @@ export default function Materials() {
   const { toast } = useToast();
   const { isAdmin } = useRole();
   const [selectedMaterials, setSelectedMaterials] = useState<string[]>([]);
+  const [isEditMode, setIsEditMode] = useState(false);
 
   const form = useForm<z.infer<typeof materialSchema>>({
     resolver: zodResolver(materialSchema),
@@ -131,7 +166,7 @@ export default function Materials() {
         id,
         ...(material as Omit<Material, "id">),
       })) : [];
-      setMaterials(materialsList); // Removed filter, showing all materials
+      setMaterials(materialsList);
     });
 
     const volunteersRef = ref(db, "volunteers");
@@ -144,6 +179,24 @@ export default function Materials() {
       setVolunteers(volunteersList);
     });
   });
+
+  const logActivity = async (
+    action: 'checkout' | 'return',
+    material: Material,
+    volunteerId: string
+  ) => {
+    try {
+      await push(ref(db, "activityLogs"), {
+        action,
+        materialTypeId: material.typeId,
+        materialNumber: material.number,
+        volunteerId,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error("Failed to log activity:", error);
+    }
+  };
 
   const onSubmit = async (data: z.infer<typeof materialSchema>) => {
     try {
@@ -158,28 +211,61 @@ export default function Materials() {
           variant: "destructive",
           title: "Fout",
           description: "Dit materiaal is al uitgeleend",
+          duration: 3000,
         });
         return;
       }
+
+      const materialType = materialTypes.find(t => t.id === data.typeId);
+      const volunteer = volunteers.find(v => v.id === data.volunteerId);
 
       if (editingMaterial) {
         await update(ref(db, `materials/${editingMaterial.id}`), {
           ...data,
           isCheckedOut: true,
         });
+
+        await logUserAction(
+          UserActionTypes.MATERIAL_CHECKOUT,
+          `${materialType?.name || 'Materiaal'} #${data.number} uitgeleend aan ${volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : 'onbekende vrijwilliger'}`,
+          {
+            type: "material",
+            id: editingMaterial.id,
+            name: materialType?.name || 'Onbekend materiaal',
+            materialNumber: data.number.toString(),
+            volunteerName: volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : undefined
+          }
+        );
+
         toast({
-          title: "Succes",
-          description: "Materiaal succesvol bijgewerkt",
+          title: "Materiaal Uitgeleend",
+          description: "Het materiaal is succesvol uitgeleend",
+          duration: 3000,
+          variant: "success",
         });
         setEditingMaterial(null);
       } else {
-        await push(ref(db, "materials"), {
+        const newMaterialRef = await push(ref(db, "materials"), {
           ...data,
           isCheckedOut: true,
         });
+
+        await logUserAction(
+          UserActionTypes.MATERIAL_CHECKOUT,
+          `${materialType?.name || 'Materiaal'} #${data.number} uitgeleend aan ${volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : 'onbekende vrijwilliger'}`,
+          {
+            type: "material",
+            id: newMaterialRef.key!,
+            name: materialType?.name || 'Onbekend materiaal',
+            materialNumber: data.number.toString(),
+            volunteerName: volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : undefined
+          }
+        );
+
         toast({
           title: "Succes",
           description: "Materiaal succesvol toegewezen",
+          duration: 3000,
         });
       }
       form.reset();
@@ -189,6 +275,7 @@ export default function Materials() {
         variant: "destructive",
         title: "Fout",
         description: "Kon materiaal niet toewijzen",
+        duration: 3000,
       });
     }
   };
@@ -197,16 +284,36 @@ export default function Materials() {
     try {
       if (editingMaterialType) {
         await update(ref(db, `materialTypes/${editingMaterialType.id}`), data);
+        await logUserAction(
+          UserActionTypes.MATERIAL_TYPE_UPDATE,
+          `Materiaaltype ${data.name} bijgewerkt`,
+          {
+            type: "material",
+            id: editingMaterialType.id,
+            name: data.name
+          }
+        );
         toast({
           title: "Succes",
           description: "Materiaaltype succesvol bijgewerkt",
+          duration: 3000,
         });
         setEditingMaterialType(null);
       } else {
-        await push(ref(db, "materialTypes"), data);
+        const newTypeRef = await push(ref(db, "materialTypes"), data);
+        await logUserAction(
+          UserActionTypes.MATERIAL_TYPE_CREATE,
+          `Nieuw materiaaltype ${data.name} aangemaakt`,
+          {
+            type: "material",
+            id: newTypeRef.key!,
+            name: data.name
+          }
+        );
         toast({
           title: "Succes",
           description: "Materiaaltype succesvol toegevoegd",
+          duration: 3000,
         });
       }
       typeForm.reset();
@@ -216,16 +323,30 @@ export default function Materials() {
         variant: "destructive",
         title: "Fout",
         description: "Kon materiaaltype niet opslaan",
+        duration: 3000,
       });
     }
   };
 
   const handleDeleteMaterialType = async (id: string) => {
     try {
+      const materialType = materialTypes.find(t => t.id === id);
+      if (!materialType) return;
+
       await remove(ref(db, `materialTypes/${id}`));
+      await logUserAction(
+        UserActionTypes.MATERIAL_TYPE_DELETE,
+        `Materiaaltype ${materialType.name} verwijderd`,
+        {
+          type: "material",
+          id: id,
+          name: materialType.name
+        }
+      );
       toast({
         title: "Succes",
         description: "Materiaaltype succesvol verwijderd",
+        duration: 3000,
       });
       setDeleteMaterialTypeId(null);
     } catch (error) {
@@ -233,25 +354,48 @@ export default function Materials() {
         variant: "destructive",
         title: "Fout",
         description: "Kon materiaaltype niet verwijderen",
+        duration: 3000,
       });
     }
   };
 
   const handleReturn = async (materialId: string) => {
     try {
+      const material = materials.find(m => m.id === materialId);
+      if (!material) return;
+
+      const materialType = materialTypes.find(t => t.id === material.typeId);
+      const volunteer = volunteers.find(v => v.id === material.volunteerId);
+
       await update(ref(db, `materials/${materialId}`), {
         volunteerId: null,
         isCheckedOut: false,
       });
+
+      await logUserAction(
+        UserActionTypes.MATERIAL_RETURN,
+        `${materialType?.name || 'Materiaal'} #${material.number} geretourneerd van ${volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : 'onbekende vrijwilliger'}`,
+        {
+          type: "material",
+          id: material.id,
+          name: materialType?.name || 'Onbekend materiaal',
+          materialNumber: material.number.toString(),
+          volunteerName: volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : undefined
+        }
+      );
+
       toast({
-        title: "Succes",
-        description: "Materiaal succesvol geretourneerd",
+        title: "Materiaal Geretourneerd",
+        description: "Het materiaal is succesvol geretourneerd",
+        duration: 3000,
+        variant: "success",
       });
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Fout",
         description: "Kon materiaal niet retourneren",
+        duration: 3000,
       });
     }
   };
@@ -276,6 +420,8 @@ export default function Materials() {
   };
 
   const filteredMaterials = materials.filter(material => {
+    if (!material.isCheckedOut) return false;
+
     const type = materialTypes.find(t => t.id === material.typeId);
     const volunteer = volunteers.find(v => v.id === material.volunteerId);
     const searchString = `${type?.name || ''} ${volunteer?.firstName || ''} ${volunteer?.lastName || ''} ${material.number}`.toLowerCase();
@@ -285,7 +431,6 @@ export default function Materials() {
   const selectedType = materialTypes.find(t => t.id === form.watch("typeId"));
   const maxNumber = selectedType?.maxCount || 100;
 
-  // Calculate statistics
   const checkedOutMaterials = materials.filter(m => m.isCheckedOut).length;
   const checkedOutByType = materialTypes.map(type => ({
     name: type.name,
@@ -293,7 +438,6 @@ export default function Materials() {
     total: type.maxCount
   }));
 
-  // Add bulk selection toggle
   const toggleSelectAll = () => {
     if (selectedMaterials.length === filteredMaterials.length) {
       setSelectedMaterials([]);
@@ -313,42 +457,111 @@ export default function Materials() {
   const handleBulkReturn = async (materialIds: string[]) => {
     try {
       const updates = {};
-      materialIds.forEach(id => {
+      const loggingPromises = [];
+      const materialsList = [];
+
+      for (const id of materialIds) {
+        const material = materials.find(m => m.id === id);
+        if (!material) continue;
+
         updates[`materials/${id}/volunteerId`] = null;
         updates[`materials/${id}/isCheckedOut`] = false;
-      });
+
+        const type = materialTypes.find(t => t.id === material.typeId);
+        const volunteer = volunteers.find(v => v.id === material.volunteerId);
+        materialsList.push({
+          name: type?.name || 'Onbekend materiaal',
+          number: material.number,
+          volunteer: volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : 'Onbekend'
+        });
+
+        loggingPromises.push(
+          logUserAction(
+            UserActionTypes.MATERIAL_BULK_RETURN,
+            `${type?.name || 'Materiaal'} #${material.number} geretourneerd van ${volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : 'onbekende vrijwilliger'}`,
+            {
+              type: "material",
+              id: material.id,
+              name: type?.name || 'Onbekend materiaal',
+              materialNumber: material.number.toString(),
+              volunteerId: material.volunteerId,
+              volunteerName: volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : undefined
+            }
+          )
+        );
+      }
+
       await update(ref(db, ''), updates);
-      toast({ title: 'Succes', description: 'Materialen succesvol geretourneerd' });
+      await Promise.all(loggingPromises);
+
+      toast({ 
+        title: 'Succes', 
+        description: 'Materialen succesvol geretourneerd',
+        duration: 3000,
+        variant: "success"
+      });
       setSelectedMaterials([]);
     } catch (error) {
-      toast({ variant: 'destructive', title: 'Fout', description: 'Kon materialen niet retourneren' });
+      toast({ 
+        variant: 'destructive', 
+        title: 'Fout', 
+        description: 'Kon materialen niet retourneren',
+        duration: 3000
+      });
     }
   };
 
 
   return (
-    <div className="space-y-6">
+    <div className="container mx-auto px-4 py-6 max-w-7xl space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
         <div className="flex items-center gap-3">
           <Package2 className="h-8 w-8 text-primary" />
-          <h1 className="text-3xl font-bold text-primary">Materiaalbeheer</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-primary">Materiaalbeheer</h1>
         </div>
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <div className="relative flex-1 sm:w-64">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-500" />
-            <Input
-              placeholder="Zoeken..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9"
-            />
-          </div>
-          {isAdmin && (
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {checkedOutByType.map(stat => (
+          <Card key={stat.name}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {stat.name}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  {getMaterialIcon(stat.name)}
+                  <div className="ml-3">
+                    <div className="text-2xl font-bold">{stat.count}</div>
+                    <div className="text-sm text-muted-foreground">van {stat.total}</div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
+        <div className="relative flex-1 w-full">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <InputComponent
+            placeholder="Zoeken..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-9 w-full"
+          />
+        </div>
+
+        {isAdmin && (
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <Dialog open={isTypesDialogOpen} onOpenChange={setIsTypesDialogOpen}>
               <DialogTrigger asChild>
-                <Button className="bg-primary hover:bg-primary/90">
+                <Button variant="outline" className="flex-1 sm:flex-none">
                   <Plus className="h-4 w-4 mr-2" />
-                  Materiaaltype
+                  Type Toevoegen
                 </Button>
               </DialogTrigger>
               <DialogContent>
@@ -398,317 +611,280 @@ export default function Materials() {
                 </Form>
               </DialogContent>
             </Dialog>
-          )}
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-[#6BB85C] hover:bg-[#6BB85C]/90">
-                <Package2 className="h-4 w-4 mr-2" />
-                Materiaal Toewijzen
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>
-                  {editingMaterial ? "Materiaal Bewerken" : "Materiaal Toewijzen"}
-                </DialogTitle>
-              </DialogHeader>
-              <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                  <FormField
-                    control={form.control}
-                    name="typeId"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Type Materiaal</FormLabel>
-                        <Select
-                          onValueChange={field.onChange}
-                          defaultValue={field.value}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Selecteer type" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {materialTypes.map((type) => (
-                              <SelectItem key={type.id} value={type.id}>
-                                {type.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="volunteerId"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Vrijwilliger</FormLabel>
-                        <Select
-                          onValueChange={field.onChange}
-                          defaultValue={field.value}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Selecteer vrijwilliger" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {volunteers.map((volunteer) => (
-                              <SelectItem key={volunteer.id} value={volunteer.id}>
-                                {volunteer.firstName} {volunteer.lastName}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="number"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Nummer</FormLabel>
-                        <Select
-                          onValueChange={(value) => field.onChange(parseInt(value))}
-                          defaultValue={field.value?.toString()}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Selecteer nummer" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {Array.from({ length: maxNumber }).map((_, i) => (
-                              <SelectItem key={i + 1} value={(i + 1).toString()}>
-                                {i + 1}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <Button type="submit" className="w-full">
-                    {editingMaterial ? "Materiaal Bijwerken" : "Materiaal Toewijzen"}
+
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="bg-[#6BB85C] hover:bg-[#6BB85C]/90 text-white flex-1 sm:flex-none">
+                  <Package2 className="h-4 w-4 mr-2" />
+                  Toewijzen
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>
+                    {editingMaterial ? "Materiaal Bewerken" : "Materiaal Toewijzen"}
+                  </DialogTitle>
+                </DialogHeader>
+                <Form {...form}>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                    <FormField
+                      control={form.control}
+                      name="typeId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Type Materiaal</FormLabel>
+                          <Select
+                            onValueChange={field.onChange}
+                            defaultValue={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecteer type" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {materialTypes.map((type) => (
+                                <SelectItem key={type.id} value={type.id}>
+                                  {type.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="volunteerId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Vrijwilliger</FormLabel>
+                          <Select
+                            onValueChange={field.onChange}
+                            defaultValue={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecteer vrijwilliger" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {volunteers.map((volunteer) => (
+                                <SelectItem key={volunteer.id} value={volunteer.id}>
+                                  {volunteer.firstName} {volunteer.lastName}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="number"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Nummer</FormLabel>
+                          <Select
+                            onValueChange={(value) => field.onChange(parseInt(value))}
+                            defaultValue={field.value?.toString()}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecteer nummer" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {Array.from({ length: maxNumber }).map((_, i) => (
+                                <SelectItem key={i + 1} value={(i + 1).toString()}>
+                                  {i + 1}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <Button type="submit" className="w-full">
+                      {editingMaterial ? "Materiaal Bijwerken" : "Materiaal Toewijzen"}
+                    </Button>
+                  </form>
+                </Form>
+              </DialogContent>
+            </Dialog>
+
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setIsEditMode(!isEditMode)}
+                    className={`${isEditMode ? "bg-primary/10 text-primary" : ""}`}
+                  >
+                    <Settings2 className="h-5 w-5" />
                   </Button>
-                </form>
-              </Form>
-            </DialogContent>
-          </Dialog>
-        </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {isEditMode ? "Bewerken afsluiten" : "Lijst bewerken"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+        )}
       </div>
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center">
-              <Package2 className="h-8 w-8 text-primary/80" />
-              <div className="ml-4">
-                <h3 className="text-sm font-medium text-gray-500">Uitgeleende Materialen</h3>
-                <p className="text-2xl font-bold text-primary">{checkedOutMaterials}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {checkedOutByType.map(stat => (
-          <Card key={stat.name}>
-            <CardContent className="pt-6">
-              <div className="flex items-center">
-                <Package2 className="h-8 w-8 text-primary/80" />
-                <div className="ml-4">
-                  <h3 className="text-sm font-medium text-gray-500">{stat.name}</h3>
-                  <p className="text-2xl font-bold text-primary">
-                    {stat.count} / {stat.total}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {isAdmin && (
-        <div className="rounded-lg border bg-card">
+      <div className="rounded-lg border bg-card overflow-x-auto">
+        <div className="min-w-[800px]">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[50px]">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={toggleSelectAll}
-                    className="hover:bg-transparent"
-                  >
-                    {selectedMaterials.length === filteredMaterials.length ? (
-                      <CheckSquare className="h-4 w-4" />
-                    ) : (
-                      <Square className="h-4 w-4" />
-                    )}
-                  </Button>
-                </TableHead>
-                <TableHead>Materiaaltype</TableHead>
-                <TableHead>Maximum Aantal</TableHead>
+                {isEditMode && (
+                  <TableHead className="w-[50px]">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={toggleSelectAll}
+                            className="hover:bg-transparent"
+                          >
+                            {selectedMaterials.length === filteredMaterials.length ? (
+                              <CheckSquare className="h-4 w-4" />
+                            ) : (
+                              <Square className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {selectedMaterials.length === filteredMaterials.length ?
+                            "Deselecteer alles" : "Selecteer alles"}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </TableHead>
+                )}
+                <TableHead>Type</TableHead>
+                <TableHead>Nummer</TableHead>
+                <TableHead>Vrijwilliger</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead className="w-[100px]">Acties</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {materialTypes.map((type) => (
-                <TableRow key={type.id}>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => toggleSelect(type.id)}
-                      className="hover:bg-transparent"
-                    >
-                      {selectedMaterials.includes(type.id) ? (
-                        <CheckSquare className="h-4 w-4" />
-                      ) : (
-                        <Square className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </TableCell>
-                  <TableCell>{type.name}</TableCell>
-                  <TableCell>{type.maxCount}</TableCell>
-                  <TableCell className="flex space-x-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleEditType(type)}
-                      className="text-[#6BB85C] hover:text-[#6BB85C] hover:bg-[#6BB85C]/10"
-                    >
-                      <Edit2 className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeleteMaterialTypeId(type.id)}
-                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+              {filteredMaterials.map((item) => {
+                const type = materialTypes.find((t) => t.id === item.typeId);
+                const volunteer = volunteers.find((v) => v.id === item.volunteerId);
+                return (
+                  <TableRow key={item.id} className="group">
+                    {isEditMode && (
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => toggleSelect(item.id)}
+                          className="hover:bg-transparent"
+                        >
+                          {selectedMaterials.includes(item.id) ? (
+                            <CheckSquare className="h-4 w-4" />
+                          ) : (
+                            <Square className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </TableCell>
+                    )}
+                    <TableCell>{type?.name || "-"}</TableCell>
+                    <TableCell>{item.number}</TableCell>
+                    <TableCell>
+                      {volunteer
+                        ? `${volunteer.firstName} ${volunteer.lastName}`
+                        : "-"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={item.isCheckedOut ? "default" : "secondary"}
+                        className="font-normal"
+                      >
+                        {item.isCheckedOut ? "Uitgeleend" : "Beschikbaar"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {isEditMode && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleEdit(item)}
+                                  className="text-primary hover:text-primary hover:bg-primary/10"
+                                >
+                                  <Edit2 className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Bewerken</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
+                        {item.isCheckedOut && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleReturn(item.id)}
+                                  className="text-primary hover:text-primary hover:bg-primary/10"
+                                >
+                                  <RotateCcw className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Retourneren</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              {filteredMaterials.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={isEditMode ? 6 : 5}
+                    className="h-32 text-center text-muted-foreground"
+                  >
+                    <Package2 className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    Geen materialen gevonden
                   </TableCell>
                 </TableRow>
-              ))}
+              )}
             </TableBody>
           </Table>
         </div>
-      )}
-
-      <div className="rounded-lg border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[50px]">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={toggleSelectAll}
-                  className="hover:bg-transparent"
-                >
-                  {selectedMaterials.length === filteredMaterials.length ? (
-                    <CheckSquare className="h-4 w-4" />
-                  ) : (
-                    <Square className="h-4 w-4" />
-                  )}
-                </Button>
-              </TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Nummer</TableHead>
-              <TableHead>Vrijwilliger</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="w-[100px]">Acties</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredMaterials.map((item) => {
-              const type = materialTypes.find((t) => t.id === item.typeId);
-              const volunteer = volunteers.find((v) => v.id === item.volunteerId);
-              return (
-                <TableRow key={item.id}>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => toggleSelect(item.id)}
-                      className="hover:bg-transparent"
-                    >
-                      {selectedMaterials.includes(item.id) ? (
-                        <CheckSquare className="h-4 w-4" />
-                      ) : (
-                        <Square className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </TableCell>
-                  <TableCell>{type?.name || "-"}</TableCell>
-                  <TableCell>{item.number}</TableCell>
-                  <TableCell>
-                    {volunteer
-                      ? `${volunteer.firstName} ${volunteer.lastName}`
-                      : "-"}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={item.isCheckedOut ? "default" : "secondary"}>
-                      {item.isCheckedOut ? "Uitgeleend" : "Beschikbaar"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="flex space-x-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleEdit(item)}
-                      className="text-[#6BB85C] hover:text-[#6BB85C] hover:bg-[#6BB85C]/10"
-                    >
-                      <Edit2 className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleReturn(item.id)}
-                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-            {filteredMaterials.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center py-6 text-gray-500">
-                  Geen materialen gevonden
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
       </div>
 
-      {/* Bulk Actions */}
-      {selectedMaterials.length > 0 && (
-        <div className="fixed bottom-4 right-4 flex gap-2 bg-white p-4 rounded-lg shadow-lg border">
-          <span className="text-sm text-gray-500 self-center mr-2">
+      {isEditMode && selectedMaterials.length > 0 && (
+        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 flex items-center gap-3 bg-white p-4 rounded-lg shadow-lg border animate-in slide-in-from-bottom-2">
+          <span className="text-sm text-muted-foreground hidden sm:inline">
             {selectedMaterials.length} geselecteerd
           </span>
+          <Separator orientation="vertical" className="h-6 hidden sm:block" />
           <Button
             variant="default"
             onClick={() => handleBulkReturn(selectedMaterials)}
+            className="bg-primary hover:bg-primary/90 w-full sm:w-auto"
           >
             <RotateCcw className="h-4 w-4 mr-2" />
-            Retourneren
+            {selectedMaterials.length} Retourneren
           </Button>
         </div>
       )}
-
       <AlertDialog
         open={!!deleteMaterialTypeId}
         onOpenChange={() => setDeleteMaterialTypeId(null)}

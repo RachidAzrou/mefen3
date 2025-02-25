@@ -4,16 +4,17 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Link, useLocation } from "wouter";
 import {
-  LayoutDashboard, Users, Calendar, DoorOpen,
+  LayoutDashboard, Users, Calendar,
   Package2, LogOut, Menu, ChevronLeft, ChevronRight,
-  Settings, FileJson, User
+  Settings, FileJson, User, House
 } from "lucide-react";
-import { PiMosqueFill } from "react-icons/pi";
+import { PiMosqueLight } from "react-icons/pi";
 import { useState, useEffect } from "react";
 import { auth } from "@/lib/firebase";
 import { signOut } from "firebase/auth";
 import { useRole } from "@/hooks/use-role";
 import { useNotifications } from "@/hooks/use-notifications";
+import { logUserAction, UserActionTypes } from "@/lib/activity-logger";
 
 export function Sidebar() {
   const [location] = useLocation();
@@ -38,27 +39,36 @@ export function Sidebar() {
 
   const handleLogout = async () => {
     try {
+      const userEmail = auth.currentUser?.email;
       await signOut(auth);
+      await logUserAction(
+        UserActionTypes.LOGOUT,
+        undefined,
+        {
+          type: "auth",
+          id: userEmail || 'unknown',
+          name: userEmail || 'unknown'
+        }
+      );
       window.location.href = "/login";
     } catch (error) {
       console.error("Logout error:", error);
     }
   };
 
-  // Define menu items without settings (moved to bottom)
   const menuItems = [
     { icon: LayoutDashboard, label: "Dashboard", href: "/" },
     { icon: Calendar, label: "Planning", href: "/planning" },
     { icon: Users, label: "Vrijwilligers", href: "/volunteers" },
-    { icon: DoorOpen, label: "Ruimtes", href: "/rooms", adminOnly: true },
+    { icon: House, label: "Ruimtes", href: "/rooms", adminOnly: true },
     { icon: Package2, label: "Materialen", href: "/materials" },
-    { 
-      icon: FileJson, 
-      label: "Import/Export", 
+    {
+      icon: FileJson,
+      label: "Import/Export",
       href: "/import-export",
       notificationCount: unreadCount
     },
-    { icon: PiMosqueFill, label: "Mijn Moskee", href: "/mosque" }
+    { icon: PiMosqueLight, label: "Mijn Moskee", href: "/mosque" }
   ].filter(item => !item.adminOnly || isAdmin);
 
   return (
@@ -110,7 +120,6 @@ export function Sidebar() {
           )}
         </div>
 
-        {/* User Profile Section - Now under logo */}
         <Link href="/profile">
           <div className={cn(
             "border-b p-4 cursor-pointer hover:bg-gray-50 transition-colors",
@@ -137,8 +146,8 @@ export function Sidebar() {
         <ScrollArea className="flex-1">
           <div className="space-y-1 p-2">
             {menuItems.map((item) => (
-              <Link 
-                key={item.href} 
+              <Link
+                key={item.href}
                 href={item.href}
                 onClick={() => {
                   if (item.href === '/import-export') {
@@ -158,13 +167,13 @@ export function Sidebar() {
                     isMobile && !collapsed && "text-base"
                   )}
                 >
-                  <item.icon
-                    className={cn(
-                      item.icon === PiMosqueFill ? "h-7 w-7" : "h-5 w-5",
-                      isMobile && !collapsed && item.icon === PiMosqueFill ? "h-8 w-8" : "h-6 w-6",
+                  {React.createElement(item.icon, {
+                    className: cn(
+                      "h-5 w-5",
+                      isMobile && !collapsed ? "h-6 w-6" : "h-5 w-5",
                       location === item.href ? "text-primary" : "text-gray-500"
-                    )}
-                  />
+                    )
+                  })}
                   {!collapsed && (
                     <span className={cn("ml-2", isMobile && "text-base")}>
                       {item.label}

@@ -15,20 +15,20 @@ import {
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from "@/components/ui/accordion"
+} from "@/components/ui/accordion";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Calendar } from "@/components/ui/calendar"
+} from "@/components/ui/select";
+import { Calendar } from "@/components/ui/calendar";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover"
+} from "@/components/ui/popover";
 import { updateUserRole } from "@/lib/roles";
 import { db, auth } from "@/lib/firebase";
 import { ref, onValue, remove } from "firebase/database";
@@ -40,10 +40,9 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { UserAction } from "@/lib/activity-logger";
 import { format } from "date-fns";
 import { nl } from "date-fns/locale";
-import { logUserAction } from "@/lib/activity-logger";
+import { logUserAction, UserActionTypes, UserAction } from "@/lib/activity-logger";
 
 type DatabaseUser = {
   uid: string;
@@ -134,18 +133,25 @@ export default function Settings() {
     try {
       await updateUserRole(uid, email, newIsAdmin);
       await logUserAction(
-        "Gebruikersrol gewijzigd",
-        `${email} is gewijzigd naar ${newIsAdmin ? 'administrator' : 'medewerker'}`
+        UserActionTypes.USER_ROLE_UPDATE,
+        `${email} is nu ${newIsAdmin ? 'administrator' : 'medewerker'}`,
+        {
+          type: "user",
+          id: uid,
+          name: email
+        }
       );
       toast({
         title: "Succes",
         description: `Gebruiker ${email} is nu ${newIsAdmin ? 'admin' : 'medewerker'}`,
+        duration: 3000,
       });
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Fout",
         description: "Kon gebruikersrol niet wijzigen",
+        duration: 3000,
       });
     }
   };
@@ -155,13 +161,19 @@ export default function Settings() {
       const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
       await updateUserRole(userCredential.user.uid, data.email, data.isAdmin);
       await logUserAction(
-        "Nieuwe gebruiker aangemaakt",
-        `Gebruiker ${data.email} aangemaakt als ${data.isAdmin ? 'administrator' : 'medewerker'}`
+        UserActionTypes.USER_CREATE,
+        `Nieuwe gebruiker ${data.email} aangemaakt als ${data.isAdmin ? 'administrator' : 'medewerker'}`,
+        {
+          type: "user",
+          id: userCredential.user.uid,
+          name: data.email
+        }
       );
 
       toast({
         title: "Succes",
         description: "Nieuwe gebruiker is succesvol aangemaakt",
+        duration: 3000,
       });
       form.reset();
     } catch (error: any) {
@@ -169,6 +181,7 @@ export default function Settings() {
         variant: "destructive",
         title: "Fout",
         description: error.message || "Kon gebruiker niet aanmaken",
+        duration: 3000,
       });
     }
   };
@@ -186,6 +199,7 @@ export default function Settings() {
       toast({
         title: "Succes",
         description: "Een wachtwoord reset link is verstuurd naar de gebruiker",
+        duration: 3000,
       });
       setChangingPasswordFor(null);
       passwordForm.reset();
@@ -194,6 +208,7 @@ export default function Settings() {
         variant: "destructive",
         title: "Fout",
         description: error.message || "Kon wachtwoord niet wijzigen",
+        duration: 3000,
       });
     }
   };
@@ -204,13 +219,19 @@ export default function Settings() {
     try {
       await remove(ref(db, `users/${deletingUser.uid}`));
       await logUserAction(
-        "Gebruiker verwijderd",
-        `Gebruiker ${deletingUser.email} is verwijderd`
+        UserActionTypes.USER_DELETE,
+        `Gebruiker ${deletingUser.email} is verwijderd`,
+        {
+          type: "user",
+          id: deletingUser.uid,
+          name: deletingUser.email
+        }
       );
 
       toast({
         title: "Succes",
         description: `Gebruiker ${deletingUser.email} is verwijderd`,
+        duration: 3000,
       });
       setDeletingUser(null);
     } catch (error: any) {
@@ -218,7 +239,46 @@ export default function Settings() {
         variant: "destructive",
         title: "Fout",
         description: error.message || "Kon gebruiker niet verwijderen",
+        duration: 3000,
       });
+    }
+  };
+
+  const getActionIcon = (action: string) => {
+    if (action.includes('materiaal')) return '📦';
+    if (action.includes('vrijwilliger')) return '👤';
+    if (action.includes('planning')) return '📅';
+    if (action.includes('gebruiker')) return '👥';
+    if (action.includes('ingelogd') || action.includes('uitgelogd')) return '🔑';
+    if (action.includes('export')) return '📤';
+    if (action.includes('import')) return '📥';
+    if (action.includes('pdf') || action.includes('PDF')) return '📄';
+    return '📝';
+  };
+
+  const getActionDescription = (log: UserAction) => {
+    const type = log.targetType?.toLowerCase();
+    const name = log.targetName || '-';
+
+    switch (type) {
+      case 'material':
+        if (log.materialNumber) {
+          return `${name} #${log.materialNumber}${log.volunteerName ? ` (${log.volunteerName})` : ''}`;
+        }
+        return name;
+
+      case 'volunteer':
+      case 'planning':
+      case 'user':
+      case 'auth':
+        return name;
+
+      case 'export':
+      case 'import':
+        return `${name} (${format(new Date(log.timestamp), 'dd/MM/yyyy')})`;
+
+      default:
+        return name;
     }
   };
 
@@ -240,7 +300,6 @@ export default function Settings() {
       </div>
 
       <Accordion type="single" collapsible className="space-y-4">
-        {/* Add New User Section */}
         <AccordionItem value="add-user" className="border rounded-lg overflow-hidden">
           <AccordionTrigger className="px-6 py-4 bg-gray-50/80 hover:bg-gray-50/90 [&[data-state=open]>svg]:rotate-180">
             <div className="flex items-center gap-2 text-[#963E56]">
@@ -303,7 +362,6 @@ export default function Settings() {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Users List Section */}
         <AccordionItem value="manage-users" className="border rounded-lg overflow-hidden">
           <AccordionTrigger className="px-6 py-4 bg-gray-50/80 hover:bg-gray-50/90 [&[data-state=open]>svg]:rotate-180">
             <div className="flex items-center gap-2 text-[#963E56]">
@@ -380,7 +438,6 @@ export default function Settings() {
           </AccordionContent>
         </AccordionItem>
 
-        {/* User Activity Logs Section */}
         <AccordionItem value="activity-logs" className="border rounded-lg overflow-hidden">
           <AccordionTrigger className="px-6 py-4 bg-gray-50/80 hover:bg-gray-50/90 [&[data-state=open]>svg]:rotate-180">
             <div className="flex items-center gap-2 text-[#963E56]">
@@ -463,10 +520,8 @@ export default function Settings() {
                     <TableRow className="bg-gray-50/50">
                       <TableHead className="w-[180px]">Tijdstip</TableHead>
                       <TableHead>Gebruiker</TableHead>
-                      <TableHead>Actie</TableHead>
-                      <TableHead>Object Type</TableHead>
-                      <TableHead>Object Naam</TableHead>
-                      <TableHead>Details</TableHead>
+                      <TableHead>Activiteit</TableHead>
+                      <TableHead>Object</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -476,17 +531,18 @@ export default function Settings() {
                           {format(new Date(log.timestamp), "d MMM yyyy HH:mm:ss", { locale: nl })}
                         </TableCell>
                         <TableCell>{log.userEmail}</TableCell>
-                        <TableCell>{log.action}</TableCell>
-                        <TableCell>{log.targetType || "-"}</TableCell>
-                        <TableCell>{log.targetName || "-"}</TableCell>
-                        <TableCell className="max-w-xs truncate">
-                          {log.details || "-"}
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg">{getActionIcon(log.action)}</span>
+                            <span>{log.action}</span>
+                          </div>
                         </TableCell>
+                        <TableCell>{getActionDescription(log)}</TableCell>
                       </TableRow>
                     ))}
                     {filteredLogs.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-gray-500">
+                        <TableCell colSpan={4} className="text-center py-8 text-gray-500">
                           <Activity className="h-8 w-8 mx-auto mb-2 opacity-50" />
                           <p>Geen activiteiten gevonden voor de geselecteerde filters</p>
                         </TableCell>
@@ -504,7 +560,6 @@ export default function Settings() {
         </AccordionItem>
       </Accordion>
 
-      {/* Password Change Dialog */}
       {changingPasswordFor && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <Card className="w-full max-w-md mx-4">
@@ -540,7 +595,6 @@ export default function Settings() {
         </div>
       )}
 
-      {/* Delete User Dialog */}
       {deletingUser && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <Card className="w-full max-w-md mx-4">
