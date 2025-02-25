@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getMessaging, getToken, onMessage } from 'firebase/messaging';
+import { getMessaging, onMessage } from 'firebase/messaging';
 import { ref, onValue } from 'firebase/database';
 import { db } from '@/lib/firebase';
 import { useToast } from '@/hooks/use-toast';
@@ -28,17 +28,17 @@ export function useNotifications() {
 
       if (permission === 'granted') {
         const messaging = getMessaging();
-        const token = await getToken(messaging, {
-          vapidKey: 'YOUR_VAPID_KEY' // Vervang dit met je VAPID key
-        });
-        console.log('FCM Token:', token);
 
-        // Luister naar berichten wanneer de app in de voorgrond is
+        // Luister alleen naar berichten wanneer de app in de voorgrond is
         onMessage(messaging, (payload) => {
+          console.log('Voorgrond bericht ontvangen:', payload);
+
+          // Toon een toast notificatie met de nieuwe styling
           toast({
             title: payload.notification?.title || "Nieuwe Aanmelding",
             description: payload.notification?.body,
-            duration: 5000,
+            variant: "success",
+            duration: 2000, // 2 seconden
           });
         });
       }
@@ -64,34 +64,19 @@ export function useNotifications() {
           shownNotifications.add(notificationId);
           setUnreadCount(prev => prev + 1);
 
-          // Toon in-app notificatie
+          // Toon toast notificatie met de nieuwe styling
           toast({
             title: "Nieuwe Vrijwilliger Aanmelding",
             description: `${latestVolunteer.firstName} ${latestVolunteer.lastName} heeft zich aangemeld als vrijwilliger.`,
-            duration: 5000,
+            variant: "success",
+            duration: 2000, // 2 seconden
           });
-
-          // Toon push notificatie als permissie is gegeven
-          if (permission === 'granted') {
-            const notification = new Notification("Nieuwe Vrijwilliger Aanmelding", {
-              body: `${latestVolunteer.firstName} ${latestVolunteer.lastName} heeft zich aangemeld als vrijwilliger.`,
-              icon: '/static/Naamloos.png',
-              badge: '/static/icon-512x512.png',
-              tag: 'volunteer-registration',
-              data: { volunteerId: latestVolunteer.id }
-            });
-
-            notification.onclick = () => {
-              window.focus();
-              window.location.href = '/volunteers';
-            };
-          }
         }
       }
     });
 
     return () => unsubscribe();
-  }, [toast, permission]);
+  }, [toast]);
 
   const clearUnreadCount = () => {
     setUnreadCount(0);
