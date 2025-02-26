@@ -13,6 +13,7 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,  // ✅ Toegevoegd voor JSON-imports
     "baseUrl": ".",
     "types": ["node", "vite/client"],
     "paths": {

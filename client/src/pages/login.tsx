@@ -12,8 +12,11 @@ import { LockKeyhole, Mail } from "lucide-react";
 import { Link } from "wouter";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { logUserAction, UserActionTypes } from "@/lib/activity-logger";
+
+// ✅ Versie importeren uit manifest.json (gebruik de juiste methode)
+import manifest from "@/path/to/manifest.json"; // Als JSON-imports werken
 
 const loginSchema = z.object({
   email: z.string().email("Ongeldig e-mailadres"),
@@ -31,6 +34,15 @@ export default function Login() {
   const { toast } = useToast();
   const [_, setLocation] = useLocation();
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [version, setVersion] = useState<string>(manifest.version); // Standaardwaarde uit import
+
+  useEffect(() => {
+    // ✅ Alternatief: Manifest dynamisch inladen via fetch (voor als JSON-import niet werkt)
+    fetch("/manifest.json")
+      .then((response) => response.json())
+      .then((data) => setVersion(data.version))
+      .catch(() => console.error("Kon manifest.json niet ophalen"));
+  }, []);
 
   const form = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
@@ -171,12 +183,6 @@ export default function Login() {
               >
                 Inloggen
               </Button>
-
-              <div className="text-center mt-4">
-                <Link href="/register" className="text-[#963E56] hover:underline font-medium">
-                  Registreer als vrijwilliger
-                </Link>
-              </div>
             </form>
           </CardContent>
         </Card>
@@ -186,43 +192,10 @@ export default function Login() {
             MEFEN Vrijwilligers Management Systeem
           </p>
           <p className="text-gray-400 text-xs">
-            Versie 2.1.0
+            Versie {version}
           </p>
         </div>
       </div>
-
-      <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Wachtwoord Resetten</DialogTitle>
-          </DialogHeader>
-          <Form {...resetForm}>
-            <form onSubmit={resetForm.handleSubmit(onResetSubmit)} className="space-y-4">
-              <FormField
-                control={resetForm.control}
-                name="email"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>E-mailadres</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="email"
-                        placeholder="Voer je e-mailadres in"
-                        className="h-10"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <Button type="submit" className="w-full bg-[#963E56] hover:bg-[#963E56]/90">
-                Reset link versturen
-              </Button>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
