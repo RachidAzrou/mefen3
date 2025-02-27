@@ -9,8 +9,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
-import { Calendar, Search, Trash2, Plus, Settings2 } from "lucide-react"; 
-import { format, parseISO, isWithinInterval, startOfDay, endOfDay } from "date-fns";
+import { Calendar, Search, Trash2, Plus, Settings2 } from "lucide-react";
+import { format, parseISO, startOfDay } from "date-fns";
 import { nl } from "date-fns/locale";
 import { Card, CardContent } from "@/components/ui/card";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
@@ -30,6 +30,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CustomCalendar } from "@/components/ui/calendar";
 
 const planningSchema = z.object({
   volunteerId: z.string().min(1, "Vrijwilliger is verplicht").optional(),
@@ -69,6 +70,8 @@ const PlanningTable = ({
   showActions?: boolean;
 }) => {
   const [dateFilter, setDateFilter] = useState<Date | undefined>();
+  const [sortByDate, setSortByDate] = useState(false);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   const filteredPlannings = plannings.filter(planning => {
     const matchesSearch = searchValue.toLowerCase() === '' || (() => {
@@ -81,27 +84,29 @@ const PlanningTable = ({
     })();
 
     const matchesDate = !dateFilter || (() => {
-      const planningStart = startOfDay(parseISO(planning.startDate));
-      const planningEnd = endOfDay(parseISO(planning.endDate));
       const filterDate = startOfDay(dateFilter);
-      return isWithinInterval(filterDate, { 
-        start: planningStart, 
-        end: planningEnd 
-      });
+      const planningStart = startOfDay(parseISO(planning.startDate));
+      const planningEnd = startOfDay(parseISO(planning.endDate));
+      return filterDate.getTime() === planningStart.getTime() || filterDate.getTime() === planningEnd.getTime();
     })();
 
     return matchesSearch && matchesDate;
   });
 
-  const sortedPlannings = [...filteredPlannings].sort((a, b) => {
-    // First compare by start date
-    const startDateComparison = parseISO(a.startDate).getTime() - parseISO(b.startDate).getTime();
-    if (startDateComparison !== 0) {
-      return startDateComparison;
-    }
-    // If start dates are equal, compare by end date
-    return parseISO(a.endDate).getTime() - parseISO(b.endDate).getTime();
-  });
+  const sortedPlannings = React.useMemo(() => {
+    const sorted = [...filteredPlannings].sort((a, b) => {
+      if (sortByDate) {
+        const startDateComparison = parseISO(a.startDate).getTime() - parseISO(b.startDate).getTime();
+        if (startDateComparison !== 0) {
+          return sortDirection === 'asc' ? startDateComparison : -startDateComparison;
+        }
+        const endDateComparison = parseISO(a.endDate).getTime() - parseISO(b.endDate).getTime();
+        return sortDirection === 'asc' ? endDateComparison : -endDateComparison;
+      }
+      return 0;
+    });
+    return sorted;
+  }, [filteredPlannings, sortByDate, sortDirection]);
 
   const stopPropagation = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -110,7 +115,7 @@ const PlanningTable = ({
   return (
     <div className="space-y-4" onClick={stopPropagation}>
       {showActions && (
-        <div className="flex flex-col sm:flex-row gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-500" />
             <Input
@@ -120,105 +125,174 @@ const PlanningTable = ({
               className="pl-9"
             />
           </div>
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="gap-2 whitespace-nowrap">
-                <Calendar className="h-4 w-4" />
-                {dateFilter ? format(dateFilter, 'd MMM yyyy', { locale: nl }) : 'Filter op datum'}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <Calendar
-                mode="single"
-                selected={dateFilter}
-                onSelect={setDateFilter}
-                initialFocus
-                locale={nl}
-              />
-            </PopoverContent>
-          </Popover>
-          {dateFilter && (
+          <div className="flex flex-wrap gap-2">
             <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setDateFilter(undefined)}
-              className="px-2"
+              variant="outline"
+              onClick={() => {
+                setSortByDate(!sortByDate);
+                if (sortByDate) {
+                  setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                }
+              }}
+              className={cn("gap-2 flex-shrink-0", sortByDate && "bg-primary/10 text-primary")}
             >
-              <Trash2 className="h-4 w-4" />
+              <Calendar className="h-4 w-4" />
+              <span className="hidden sm:inline">Sorteren op datum</span>
+              {sortByDate && (sortDirection === 'asc' ? '↑' : '↓')}
             </Button>
-          )}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="gap-2 flex-shrink-0">
+                  <Calendar className="h-4 w-4" />
+                  <span className="hidden sm:inline">
+                    {dateFilter ? format(dateFilter, 'd MMM yyyy', { locale: nl }) : 'Filter op datum'}
+                  </span>
+                  <span className="sm:hidden">
+                    {dateFilter ? format(dateFilter, 'dd/MM', { locale: nl }) : 'Datum'}
+                  </span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="end">
+                <CustomCalendar
+                  mode="single"
+                  selected={dateFilter}
+                  onSelect={setDateFilter}
+                  initialFocus
+                  locale={nl}
+                />
+              </PopoverContent>
+            </Popover>
+            {dateFilter && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setDateFilter(undefined)}
+                className="px-2 flex-shrink-0"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
-      <div className="rounded-lg border overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Vrijwilliger</TableHead>
-              <TableHead>Ruimte</TableHead>
-              <TableHead>Periode</TableHead>
-              {showActions && <TableHead className="w-[100px]">Acties</TableHead>}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {sortedPlannings.length === 0 ? (
+      <div className="rounded-lg border overflow-hidden">
+        {/* Desktop view */}
+        <div className="hidden sm:block">
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell
-                  colSpan={showActions ? 4 : 3}
-                  className="h-24 text-center"
-                >
-                  {emptyMessage}
-                </TableCell>
+                <TableHead>Vrijwilliger</TableHead>
+                <TableHead>Ruimte</TableHead>
+                <TableHead>Periode</TableHead>
+                {showActions && <TableHead className="w-[100px]">Acties</TableHead>}
               </TableRow>
-            ) : (
-              sortedPlannings.map((planning) => {
-                const volunteer = volunteers.find(
-                  (v) => v.id === planning.volunteerId
-                );
-                const room = rooms.find((r) => r.id === planning.roomId);
+            </TableHeader>
+            <TableBody>
+              {sortedPlannings.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={showActions ? 4 : 3}
+                    className="h-24 text-center"
+                  >
+                    {emptyMessage}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                sortedPlannings.map((planning) => {
+                  const volunteer = volunteers.find((v) => v.id === planning.volunteerId);
+                  const room = rooms.find((r) => r.id === planning.roomId);
 
-                return (
-                  <TableRow key={planning.id}>
-                    <TableCell className="font-medium">
-                      {volunteer
-                        ? `${volunteer.firstName} ${volunteer.lastName}`
-                        : "-"}
-                    </TableCell>
-                    <TableCell>{room ? room.name : "-"}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-1 text-sm">
-                        <div className="whitespace-nowrap">
-                          {format(parseISO(planning.startDate), "EEEE d MMM yyyy", {
-                            locale: nl,
-                          })}
-                        </div>
-                        <div className="whitespace-nowrap text-muted-foreground">
-                          {format(parseISO(planning.endDate), "EEEE d MMM yyyy", {
-                            locale: nl,
-                          })}
-                        </div>
-                      </div>
-                    </TableCell>
-                    {showActions && (
+                  return (
+                    <TableRow key={planning.id}>
+                      <TableCell className="font-medium">
+                        {volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : "-"}
+                      </TableCell>
+                      <TableCell>{room ? room.name : "-"}</TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => onDelete(planning.id)}
-                            className="text-[#963E56] hover:text-[#963E56]/90 hover:bg-[#963E56]/10"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                        <div className="flex flex-col gap-1 text-sm">
+                          <div className="whitespace-nowrap">
+                            {format(parseISO(planning.startDate), "EEEE d MMM yyyy", {
+                              locale: nl,
+                            })}
+                          </div>
+                          <div className="whitespace-nowrap text-muted-foreground">
+                            {format(parseISO(planning.endDate), "EEEE d MMM yyyy", {
+                              locale: nl,
+                            })}
+                          </div>
                         </div>
                       </TableCell>
+                      {showActions && (
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => onDelete(planning.id)}
+                              className="text-[#963E56] hover:text-[#963E56]/90 hover:bg-[#963E56]/10"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* Mobile view */}
+        <div className="block sm:hidden divide-y">
+          {sortedPlannings.length === 0 ? (
+            <div className="p-4 text-center text-muted-foreground">
+              {emptyMessage}
+            </div>
+          ) : (
+            sortedPlannings.map((planning) => {
+              const volunteer = volunteers.find((v) => v.id === planning.volunteerId);
+              const room = rooms.find((r) => r.id === planning.roomId);
+
+              return (
+                <div key={planning.id} className="p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="font-medium">
+                      {volunteer ? `${volunteer.firstName} ${volunteer.lastName}` : "-"}
+                    </div>
+                    {showActions && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onDelete(planning.id)}
+                        className="text-[#963E56] hover:text-[#963E56]/90 hover:bg-[#963E56]/10"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     )}
-                  </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {room ? room.name : "-"}
+                  </div>
+                  <div className="text-sm space-y-1">
+                    <div>
+                      {format(parseISO(planning.startDate), "EEEE d MMM yyyy", {
+                        locale: nl,
+                      })}
+                    </div>
+                    <div className="text-muted-foreground">
+                      {format(parseISO(planning.endDate), "EEEE d MMM yyyy", {
+                        locale: nl,
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
       </div>
     </div>
   );
@@ -340,7 +414,7 @@ const Planning = () => {
   const onSubmit = async (data: z.infer<typeof planningSchema>) => {
     try {
       if (editingPlanning) {
-        await push(ref(db, `plannings/`), { 
+        await push(ref(db, `plannings/`), {
           volunteerId: data.volunteerId,
           roomId: data.roomId,
           startDate: data.startDate,
@@ -401,8 +475,8 @@ const Planning = () => {
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center gap-3">
-        <Calendar className="h-8 w-8 text-[#963E56]" /> 
-        <h1 className="text-3xl font-bold text-[#963E56]">Planning</h1> 
+        <Calendar className="h-8 w-8 text-[#963E56]" />
+        <h1 className="text-3xl font-bold text-[#963E56]">Planning</h1>
       </div>
 
       <CollapsibleSection
@@ -459,10 +533,10 @@ const Planning = () => {
               <DialogTrigger asChild>
                 <Button className="gap-2 bg-[#963E56] hover:bg-[#963E56]/90">
                   <Plus className="h-4 w-4" />
-                  Inplannen
+                  <span className="hidden sm:inline">Inplannen</span>
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-[450px] p-6 bg-white border-none shadow-lg">
+              <DialogContent className="max-w-[95vw] sm:max-w-[450px] p-4 sm:p-6 bg-white border-none shadow-lg mx-4">
                 <DialogHeader className="mb-4 space-y-2">
                   <DialogTitle className="text-xl font-semibold text-[#963E56]">
                     {editingPlanning ? "Planning Bewerken" : "Planning"}
